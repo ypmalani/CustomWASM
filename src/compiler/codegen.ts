@@ -18,8 +18,36 @@ export function emit(ir: IRModule): string {
   const lines: string[] = [];
   lines.push("(module");
 
-  // Build funcIndex → name for call emission.
-  const funcNames = ir.functions.map((f) => f.name);
+  // Imports first (WASM function index space).
+  for (const imp of ir.imports) {
+    const params = imp.params.map((t) => ` (param ${t})`).join("");
+    const result = imp.result ? ` (result ${imp.result})` : "";
+    lines.push(
+      `  (import "${imp.module}" "${imp.name}" (func $${imp.name}${params}${result}))`,
+    );
+  }
+
+  // Memory + data segments.
+  if (ir.usesMemory) {
+    lines.push(`  (memory (export "memory") ${ir.memoryPages})`);
+    for (const seg of ir.dataSegments) {
+      lines.push(
+        `  (data (i32.const ${seg.offset}) "${escapeDataBytes(seg.bytes)}")`,
+      );
+    }
+  }
+
+  // Bump allocator: $hp global + $alloc helper.
+  if (ir.usesAllocator) {
+    lines.push(`  (global $hp (mut i32) (i32.const ${ir.heapBase}))`);
+    emitAllocHelper(lines);
+  }
+
+  // Build funcIndex → name for call emission (imports first, then functions).
+  const funcNames = [
+    ...ir.imports.map((i) => i.name),
+    ...ir.functions.map((f) => f.name),
+  ];
 
   for (const fn of ir.functions) {
     emitFunction(fn, lines, 1, funcNames);
@@ -27,6 +55,71 @@ export function emit(ir: IRModule): string {
 
   lines.push(")");
   return lines.join("\n") + "\n";
+}
+
+/**
+ * Emit the bump-allocator helper:
+ *   (func $alloc (param $n i32) (result i32)
+ *     (local $ptr i32) (local $aligned i32) (local $needed i32)
+ *     local.get $hp → $ptr
+ *     align8(n) → advance hp
+ *     while hp > memory.size * 65536: memory.grow 1; trap on -1
+ *     return $ptr
+ *   )
+ */
+function emitAllocHelper(lines: string[]): void {
+  lines.push(`  (func $alloc (param $n i32) (result i32) (local $ptr i32) (local $aligned i32)`);
+  // $ptr = $hp
+  lines.push(`    global.get $hp`);
+  lines.push(`    local.set $ptr`);
+  // $aligned = ($n + 7) & ~7
+  lines.push(`    local.get $n`);
+  lines.push(`    i32.const 7`);
+  lines.push(`    i32.add`);
+  lines.push(`    i32.const -8`);
+  lines.push(`    i32.and`);
+  lines.push(`    local.set $aligned`);
+  // $hp = $ptr + $aligned
+  lines.push(`    local.get $ptr`);
+  lines.push(`    local.get $aligned`);
+  lines.push(`    i32.add`);
+  lines.push(`    global.set $hp`);
+  // Grow loop: while $hp > memory.size * 65536
+  lines.push(`    block $grow_done`);
+  lines.push(`      loop $grow`);
+  lines.push(`        global.get $hp`);
+  lines.push(`        memory.size`);
+  lines.push(`        i32.const 65536`);
+  lines.push(`        i32.mul`);
+  lines.push(`        i32.le_u`);
+  lines.push(`        br_if $grow_done`);
+  // memory.grow 1; if result == -1 trap
+  lines.push(`        i32.const 1`);
+  lines.push(`        memory.grow`);
+  lines.push(`        i32.const -1`);
+  lines.push(`        i32.eq`);
+  lines.push(`        if`);
+  lines.push(`          unreachable`);
+  lines.push(`        end`);
+  lines.push(`        br $grow`);
+  lines.push(`      end`);
+  lines.push(`    end`);
+  // return $ptr
+  lines.push(`    local.get $ptr`);
+  lines.push(`  )`);
+}
+
+function escapeDataBytes(bytes: Uint8Array): string {
+  let out = "";
+  for (const b of bytes) {
+    // Printable ASCII excluding " \ and control chars → raw; else \HH
+    if (b >= 0x20 && b <= 0x7e && b !== 0x22 && b !== 0x5c) {
+      out += String.fromCharCode(b);
+    } else {
+      out += "\\" + b.toString(16).padStart(2, "0").toUpperCase();
+    }
+  }
+  return out;
 }
 
 function indent(level: number): string {
@@ -108,7 +201,16 @@ function emitStmt(
       break;
     }
     case "Store": {
-      throw new Error("codegen: Store is not supported (Phase 7)");
+      emitExpr(stmt.addr, lines, level, funcNames);
+      emitExpr(stmt.value, lines, level, funcNames);
+      if (stmt.byte) {
+        const off = stmt.offset !== 0 ? ` offset=${stmt.offset}` : "";
+        lines.push(`${indent(level)}i32.store8${off}`);
+      } else {
+        const off = stmt.offset !== 0 ? ` offset=${stmt.offset}` : "";
+        lines.push(`${indent(level)}${stmt.type}.store${off}`);
+      }
+      break;
     }
     case "CallStmt": {
       for (const arg of stmt.args) {
@@ -154,7 +256,9 @@ function emitExpr(
 ): void {
   switch (expr.kind) {
     case "Const": {
-      lines.push(`${indent(level)}${expr.type}.const ${formatConst(expr.type, expr.value)}`);
+      lines.push(
+        `${indent(level)}${expr.type}.const ${formatConst(expr.type, expr.value)}`,
+      );
       break;
     }
     case "LocalGet": {
@@ -205,10 +309,32 @@ function emitExpr(
       break;
     }
     case "Load": {
-      throw new Error("codegen: Load is not supported (Phase 7)");
+      emitExpr(expr.addr, lines, level, funcNames);
+      const off = expr.offset !== 0 ? ` offset=${expr.offset}` : "";
+      if (expr.byte) {
+        lines.push(`${indent(level)}i32.load8_u${off}`);
+      } else {
+        lines.push(`${indent(level)}${expr.type}.load${off}`);
+      }
+      break;
     }
     case "DataPtr": {
-      throw new Error("codegen: DataPtr is not supported (Phase 7)");
+      lines.push(`${indent(level)}i32.const ${expr.segmentOffset}`);
+      break;
+    }
+    case "Alloc": {
+      emitExpr(expr.size, lines, level, funcNames);
+      lines.push(`${indent(level)}call $alloc`);
+      break;
+    }
+    case "BlockExpr": {
+      lines.push(`${indent(level)}block (result ${expr.type})`);
+      for (const s of expr.body) {
+        emitStmt(s, lines, level + 1, funcNames);
+      }
+      emitExpr(expr.result, lines, level + 1, funcNames);
+      lines.push(`${indent(level)}end`);
+      break;
     }
     default: {
       const _exhaustive: never = expr;
@@ -252,6 +378,8 @@ function binOpInstr(type: WasmType, op: IRBinOp): string {
       return type === "i32" ? "i32.gt_s" : "f64.gt";
     case "ge":
       return type === "i32" ? "i32.ge_s" : "f64.ge";
+    case "ge_u":
+      return "i32.ge_u";
     case "and":
       return "i32.and";
     case "or":

@@ -19,6 +19,7 @@ export type IRBinOp =
   | "le"
   | "gt"
   | "ge"
+  | "ge_u" // unsigned ≥ — used for bounds checks (traps on negative indices)
   | "and"
   | "or";
 
@@ -28,7 +29,14 @@ export type IRExpr =
   | { kind: "BinOp"; type: WasmType; op: IRBinOp; left: IRExpr; right: IRExpr }
   | { kind: "UnOp"; type: WasmType; op: "eqz" | "neg"; operand: IRExpr }
   | { kind: "CallExpr"; type: WasmType; funcIndex: number; args: IRExpr[] }
-  | { kind: "Load"; type: WasmType; addr: IRExpr; offset: number }
+  | {
+      kind: "Load";
+      type: WasmType;
+      addr: IRExpr;
+      offset: number;
+      /** When true, emit i32.load8_u (string byte / codepoint). */
+      byte?: boolean;
+    }
   | { kind: "DataPtr"; type: "i32"; segmentOffset: number }
   /** Value-producing conditional; emits WASM `if (result T)`. Used for short-circuit &&/||. */
   | {
@@ -37,6 +45,19 @@ export type IRExpr =
       cond: IRExpr;
       then: IRExpr;
       else_: IRExpr;
+    }
+  /** Bump-allocator intrinsic; emits `call $alloc`. Size is in bytes. */
+  | { kind: "Alloc"; type: "i32"; size: IRExpr }
+  /**
+   * Value-producing block; emits WASM `block (result T)`.
+   * Body statements run for side effects; `result` is left on the stack.
+   * Used for array construction and bounds-checked indexing.
+   */
+  | {
+      kind: "BlockExpr";
+      type: WasmType;
+      body: IRStmt[];
+      result: IRExpr;
     };
 
 export type IRStmt =
@@ -48,7 +69,15 @@ export type IRStmt =
   | { kind: "BrIf"; cond: IRExpr; target: number }
   // Effects
   | { kind: "LocalSet"; index: number; value: IRExpr }
-  | { kind: "Store"; addr: IRExpr; offset: number; value: IRExpr }
+  | {
+      kind: "Store";
+      addr: IRExpr;
+      offset: number;
+      value: IRExpr;
+      type: WasmType;
+      /** When true, emit i32.store8. */
+      byte?: boolean;
+    }
   | { kind: "CallStmt"; funcIndex: number; args: IRExpr[] }
   | { kind: "Drop"; value: IRExpr }
   | { kind: "Return"; value?: IRExpr }
@@ -75,4 +104,8 @@ export interface IRModule {
   dataSegments: { offset: number; bytes: Uint8Array }[];
   memoryPages: number;
   heapBase: number;
+  /** True when the module needs linear memory (strings, arrays, or prints). */
+  usesMemory: boolean;
+  /** True when the module needs the bump allocator ($hp + $alloc). */
+  usesAllocator: boolean;
 }

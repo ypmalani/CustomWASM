@@ -50,7 +50,7 @@ export function PlaygroundProvider({ children }: { children: ReactNode }) {
     try {
       const outcome = await runWasm(wabt, result.wat);
       if (outcome.ok) {
-        setRunOutput([`main() => ${outcome.value}`]);
+        setRunOutput([...outcome.prints, `main() => ${outcome.value}`]);
       } else {
         setRunOutput([`error: ${outcome.error}`]);
       }

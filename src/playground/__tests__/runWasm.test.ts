@@ -12,6 +12,6 @@ describe("runWasm smoke", () => {
 
     const wabt = await wabtFactory();
     const outcome = await runWasm(wabt, result.wat!);
-    expect(outcome).toEqual({ ok: true, value: 14 });
+    expect(outcome).toEqual({ ok: true, value: 14, prints: [] });
   });
 });

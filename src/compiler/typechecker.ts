@@ -66,6 +66,27 @@ interface CheckCtx {
  * user-level type errors. Returns a parallel typed AST when checking completes
  * (typedProgram is still produced even with errors, annotated with error types).
  */
+
+/** Host builtins available to every program (Phase 7). */
+const BUILTIN_SIGNATURES: ReadonlyMap<string, FuncSig> = new Map([
+  [
+    "print_i32",
+    {
+      params: [TY_I32],
+      result: TY_VOID,
+      span: { start: 0, end: 0, line: 1, col: 1 },
+    },
+  ],
+  [
+    "print_str",
+    {
+      params: [TY_STRING],
+      result: TY_VOID,
+      span: { start: 0, end: 0, line: 1, col: 1 },
+    },
+  ],
+]);
+
 export function check(program: Program): CheckResult {
   const diagnostics: Diagnostic[] = [];
   const signatures = buildSignatures(program, diagnostics);
@@ -110,7 +131,8 @@ function buildSignatures(
   program: Program,
   diagnostics: Diagnostic[],
 ): Map<string, FuncSig> {
-  const signatures = new Map<string, FuncSig>();
+  // Pre-seed builtins so user redecl becomes "already declared".
+  const signatures = new Map<string, FuncSig>(BUILTIN_SIGNATURES);
   for (const fn of program.functions) {
     if (signatures.has(fn.name)) {
       diagnostics.push({
@@ -332,18 +354,22 @@ function checkStmt(stmt: Stmt, ctx: CheckCtx): TypedStmt {
         return { kind: "Assign", target, value, span: stmt.span };
       }
       // Indexed assignment: type-check both sides; element type must match.
+      // Strings are immutable — assigning to a string element is an error.
       const target = checkExpr(stmt.target, ctx);
-      if (
-        target.kind === "Index" &&
-        !typeEquals(target.type, value.type) &&
-        target.type.kind !== "error" &&
-        value.type.kind !== "error"
-      ) {
-        error(
-          ctx,
-          `cannot assign '${typeToString(value.type)}' to element of type '${typeToString(target.type)}'`,
-          stmt.span,
-        );
+      if (target.kind === "Index") {
+        if (target.target.type.kind === "string") {
+          error(ctx, "cannot assign to string element", stmt.span);
+        } else if (
+          !typeEquals(target.type, value.type) &&
+          target.type.kind !== "error" &&
+          value.type.kind !== "error"
+        ) {
+          error(
+            ctx,
+            `cannot assign '${typeToString(value.type)}' to element of type '${typeToString(target.type)}'`,
+            stmt.span,
+          );
+        }
       }
       return { kind: "Assign", target, value, span: stmt.span };
     }

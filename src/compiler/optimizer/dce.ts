@@ -98,25 +98,82 @@ function dceStmt(stmt: IRStmt): IRStmt | IRStmt[] {
         }
         return else_ ?? [];
       }
-      return { kind: "IfStmt", cond: stmt.cond, then, else_ };
+      return {
+        kind: "IfStmt",
+        cond: dceExpr(stmt.cond),
+        then,
+        else_,
+      };
     }
     case "Drop":
       // Drop of a side-effect-free value is a no-op.
       if (isSideEffectFree(stmt.value)) {
         return [];
       }
-      return stmt;
-    case "Br":
-    case "BrIf":
+      return { ...stmt, value: dceExpr(stmt.value) };
     case "LocalSet":
+      return { ...stmt, value: dceExpr(stmt.value) };
     case "Store":
+      return {
+        ...stmt,
+        addr: dceExpr(stmt.addr),
+        value: dceExpr(stmt.value),
+      };
     case "CallStmt":
+      return { ...stmt, args: stmt.args.map(dceExpr) };
     case "Return":
+      return stmt.value
+        ? { ...stmt, value: dceExpr(stmt.value) }
+        : stmt;
+    case "BrIf":
+      return { ...stmt, cond: dceExpr(stmt.cond) };
+    case "Br":
     case "Unreachable":
       return stmt;
     default: {
       const _exhaustive: never = stmt;
       throw new Error(`dce: unhandled stmt ${(_exhaustive as IRStmt).kind}`);
+    }
+  }
+}
+
+/** Recursively DCE nested BlockExpr bodies inside expressions. */
+function dceExpr(expr: IRExpr): IRExpr {
+  switch (expr.kind) {
+    case "Const":
+    case "LocalGet":
+    case "DataPtr":
+      return expr;
+    case "BinOp":
+      return {
+        ...expr,
+        left: dceExpr(expr.left),
+        right: dceExpr(expr.right),
+      };
+    case "UnOp":
+      return { ...expr, operand: dceExpr(expr.operand) };
+    case "CallExpr":
+      return { ...expr, args: expr.args.map(dceExpr) };
+    case "Load":
+      return { ...expr, addr: dceExpr(expr.addr) };
+    case "IfExpr":
+      return {
+        ...expr,
+        cond: dceExpr(expr.cond),
+        then: dceExpr(expr.then),
+        else_: dceExpr(expr.else_),
+      };
+    case "Alloc":
+      return { ...expr, size: dceExpr(expr.size) };
+    case "BlockExpr":
+      return {
+        ...expr,
+        body: dceStmts(expr.body),
+        result: dceExpr(expr.result),
+      };
+    default: {
+      const _exhaustive: never = expr;
+      throw new Error(`dce: unhandled expr ${(_exhaustive as IRExpr).kind}`);
     }
   }
 }
@@ -152,6 +209,8 @@ function isSideEffectFree(expr: IRExpr): boolean {
       );
     case "CallExpr":
     case "Load":
+    case "Alloc":
+    case "BlockExpr":
       return false;
     default: {
       const _exhaustive: never = expr;
@@ -191,7 +250,10 @@ function stripLocalSets(stmts: IRStmt[], removable: Set<number>): IRStmt[] {
           // Value is side-effect-free (precondition); drop the set entirely.
           break;
         }
-        out.push(stmt);
+        out.push({
+          ...stmt,
+          value: stripLocalSetsInExpr(stmt.value, removable),
+        });
         break;
       case "Block":
         out.push({ ...stmt, body: stripLocalSets(stmt.body, removable) });
@@ -202,17 +264,105 @@ function stripLocalSets(stmts: IRStmt[], removable: Set<number>): IRStmt[] {
       case "IfStmt":
         out.push({
           ...stmt,
+          cond: stripLocalSetsInExpr(stmt.cond, removable),
           then: stripLocalSets(stmt.then, removable),
           else_: stmt.else_
             ? stripLocalSets(stmt.else_, removable)
             : undefined,
         });
         break;
+      case "BrIf":
+        out.push({
+          ...stmt,
+          cond: stripLocalSetsInExpr(stmt.cond, removable),
+        });
+        break;
+      case "Store":
+        out.push({
+          ...stmt,
+          addr: stripLocalSetsInExpr(stmt.addr, removable),
+          value: stripLocalSetsInExpr(stmt.value, removable),
+        });
+        break;
+      case "CallStmt":
+        out.push({
+          ...stmt,
+          args: stmt.args.map((a) => stripLocalSetsInExpr(a, removable)),
+        });
+        break;
+      case "Drop":
+        out.push({
+          ...stmt,
+          value: stripLocalSetsInExpr(stmt.value, removable),
+        });
+        break;
+      case "Return":
+        out.push(
+          stmt.value
+            ? {
+                ...stmt,
+                value: stripLocalSetsInExpr(stmt.value, removable),
+              }
+            : stmt,
+        );
+        break;
       default:
         out.push(stmt);
     }
   }
   return out;
+}
+
+/** Strip removable LocalSets nested inside BlockExpr bodies within expressions. */
+function stripLocalSetsInExpr(
+  expr: IRExpr,
+  removable: Set<number>,
+): IRExpr {
+  switch (expr.kind) {
+    case "Const":
+    case "LocalGet":
+    case "DataPtr":
+      return expr;
+    case "BinOp":
+      return {
+        ...expr,
+        left: stripLocalSetsInExpr(expr.left, removable),
+        right: stripLocalSetsInExpr(expr.right, removable),
+      };
+    case "UnOp":
+      return {
+        ...expr,
+        operand: stripLocalSetsInExpr(expr.operand, removable),
+      };
+    case "CallExpr":
+      return {
+        ...expr,
+        args: expr.args.map((a) => stripLocalSetsInExpr(a, removable)),
+      };
+    case "Load":
+      return { ...expr, addr: stripLocalSetsInExpr(expr.addr, removable) };
+    case "IfExpr":
+      return {
+        ...expr,
+        cond: stripLocalSetsInExpr(expr.cond, removable),
+        then: stripLocalSetsInExpr(expr.then, removable),
+        else_: stripLocalSetsInExpr(expr.else_, removable),
+      };
+    case "Alloc":
+      return { ...expr, size: stripLocalSetsInExpr(expr.size, removable) };
+    case "BlockExpr":
+      return {
+        ...expr,
+        body: stripLocalSets(expr.body, removable),
+        result: stripLocalSetsInExpr(expr.result, removable),
+      };
+    default: {
+      const _exhaustive: never = expr;
+      throw new Error(
+        `dce: unhandled expr ${(_exhaustive as IRExpr).kind}`,
+      );
+    }
+  }
 }
 
 function densifyLocals(
@@ -312,6 +462,14 @@ function remapExpr(expr: IRExpr, indexMap: Map<number, number>): IRExpr {
         then: remapExpr(expr.then, indexMap),
         else_: remapExpr(expr.else_, indexMap),
       };
+    case "Alloc":
+      return { ...expr, size: remapExpr(expr.size, indexMap) };
+    case "BlockExpr":
+      return {
+        ...expr,
+        body: remapIndices(expr.body, indexMap),
+        result: remapExpr(expr.result, indexMap),
+      };
     default: {
       const _exhaustive: never = expr;
       throw new Error(`dce: unhandled expr ${(_exhaustive as IRExpr).kind}`);
@@ -399,6 +557,15 @@ function walkExpr(expr: IRExpr, visit: (expr: IRExpr) => void): void {
       walkExpr(expr.then, visit);
       walkExpr(expr.else_, visit);
       break;
+    case "Alloc":
+      walkExpr(expr.size, visit);
+      break;
+    case "BlockExpr":
+      // Critical: descend into body so temp locals used by array/index
+      // lowering are collected and densified correctly.
+      walkStmts(expr.body, visit);
+      walkExpr(expr.result, visit);
+      break;
     default: {
       const _exhaustive: never = expr;
       throw new Error(`dce: unhandled expr ${(_exhaustive as IRExpr).kind}`);
@@ -417,9 +584,74 @@ function walkStmtNodes(stmts: IRStmt[], visit: (stmt: IRStmt) => void): void {
       case "IfStmt":
         walkStmtNodes(stmt.then, visit);
         if (stmt.else_) walkStmtNodes(stmt.else_, visit);
+        // Also walk BlockExpr bodies nested in the condition.
+        walkExprStmtNodes(stmt.cond, visit);
+        break;
+      case "LocalSet":
+        walkExprStmtNodes(stmt.value, visit);
+        break;
+      case "Store":
+        walkExprStmtNodes(stmt.addr, visit);
+        walkExprStmtNodes(stmt.value, visit);
+        break;
+      case "CallStmt":
+        for (const a of stmt.args) walkExprStmtNodes(a, visit);
+        break;
+      case "Drop":
+        walkExprStmtNodes(stmt.value, visit);
+        break;
+      case "Return":
+        if (stmt.value) walkExprStmtNodes(stmt.value, visit);
+        break;
+      case "BrIf":
+        walkExprStmtNodes(stmt.cond, visit);
         break;
       default:
         break;
+    }
+  }
+}
+
+/** Walk statement nodes nested inside BlockExpr expressions. */
+function walkExprStmtNodes(
+  expr: IRExpr,
+  visit: (stmt: IRStmt) => void,
+): void {
+  switch (expr.kind) {
+    case "Const":
+    case "LocalGet":
+    case "DataPtr":
+      break;
+    case "BinOp":
+      walkExprStmtNodes(expr.left, visit);
+      walkExprStmtNodes(expr.right, visit);
+      break;
+    case "UnOp":
+      walkExprStmtNodes(expr.operand, visit);
+      break;
+    case "CallExpr":
+      for (const a of expr.args) walkExprStmtNodes(a, visit);
+      break;
+    case "Load":
+      walkExprStmtNodes(expr.addr, visit);
+      break;
+    case "IfExpr":
+      walkExprStmtNodes(expr.cond, visit);
+      walkExprStmtNodes(expr.then, visit);
+      walkExprStmtNodes(expr.else_, visit);
+      break;
+    case "Alloc":
+      walkExprStmtNodes(expr.size, visit);
+      break;
+    case "BlockExpr":
+      walkStmtNodes(expr.body, visit);
+      walkExprStmtNodes(expr.result, visit);
+      break;
+    default: {
+      const _exhaustive: never = expr;
+      throw new Error(
+        `dce: unhandled expr ${(_exhaustive as IRExpr).kind}`,
+      );
     }
   }
 }

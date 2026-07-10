@@ -142,14 +142,20 @@ type IRExpr =
   | { kind: "BinOp";    type: WasmType; op: IRBinOp; left: IRExpr; right: IRExpr }
   | { kind: "UnOp";     type: WasmType; op: "eqz" | "neg"; operand: IRExpr }
   | { kind: "CallExpr"; type: WasmType; funcIndex: number; args: IRExpr[] }
-  | { kind: "Load";     type: WasmType; addr: IRExpr; offset: number }
+  | { kind: "Load";     type: WasmType; addr: IRExpr; offset: number; byte?: boolean }
   | { kind: "DataPtr";  type: "i32"; segmentOffset: number }  // static strings
   // Value-producing conditional; emits WASM `if (result T)`. Used for short-circuit &&/||.
-  | { kind: "IfExpr";   type: WasmType; cond: IRExpr; then: IRExpr; else_: IRExpr };
+  | { kind: "IfExpr";   type: WasmType; cond: IRExpr; then: IRExpr; else_: IRExpr }
+  // Bump-allocator intrinsic; emits `call $alloc`. Size is in bytes.
+  | { kind: "Alloc";    type: "i32"; size: IRExpr }
+  // Value-producing block; emits WASM `block (result T)`. Used for array
+  // construction and bounds-checked indexing (evaluate-once via temp locals).
+  | { kind: "BlockExpr"; type: WasmType; body: IRStmt[]; result: IRExpr };
 
 // i32.add, i32.mul, i32.div_s, i32.rem_s, i32.lt_s, f64.add, ... (typed by `type`)
 type IRBinOp = "add" | "sub" | "mul" | "div" | "rem"
              | "eq" | "ne" | "lt" | "le" | "gt" | "ge"
+             | "ge_u"  // unsigned ≥ for bounds checks
              | "and" | "or";
 
 type IRStmt =
@@ -161,7 +167,8 @@ type IRStmt =
   | { kind: "BrIf";  cond: IRExpr; target: number }
   // Effects
   | { kind: "LocalSet"; index: number; value: IRExpr }
-  | { kind: "Store";    addr: IRExpr; offset: number; value: IRExpr }
+  | { kind: "Store";    addr: IRExpr; offset: number; value: IRExpr;
+                        type: WasmType; byte?: boolean }
   | { kind: "CallStmt"; funcIndex: number; args: IRExpr[] } // void call
   | { kind: "Drop";     value: IRExpr }                     // discarded result
   | { kind: "Return";   value?: IRExpr }
@@ -178,10 +185,13 @@ interface IRFunction {
 
 interface IRModule {
   functions: IRFunction[];
+  // Host imports occupy the lowest function indices (imports-first, matching WASM).
   imports: { module: string; name: string; params: WasmType[]; result?: WasmType }[];
   dataSegments: { offset: number; bytes: Uint8Array }[];
   memoryPages: number;          // initial linear memory size
-  heapBase: number;             // start of dynamic allocation region
+  heapBase: number;             // start of dynamic allocation region (8-aligned after static data)
+  usesMemory: boolean;          // emit (memory ...) + data segments
+  usesAllocator: boolean;       // emit $hp global + $alloc helper
 }
 ```
 
@@ -208,7 +218,13 @@ a || b   ⇒   IfExpr(cond: a, then: Const(1), else_: b)
 
 `IfExpr` maps 1:1 onto WASM `if (result T) ... else ... end`, preserving true short-circuit evaluation (the untaken arm is never evaluated). Eager `and`/`or` IRBinOps are reserved for non-short-circuit uses; they are not used for source `&&`/`||`.
 
+**Comparison `BinOp.type`:** for `eq`/`ne`/`lt`/`le`/`gt`/`ge`, the IR `type` field is the *operand* Wasm type (so codegen emits `i32.lt_s` vs `f64.lt`). The instruction always leaves an `i32` (0|1) on the stack. For arithmetic ops, `type` is both operand and result type.
+
 **Codegen consumes IR only.** The WAT emitter (`emit(ir: IRModule)`) takes the lowered IR as its sole input. The typed AST is never a codegen input after Phase 5.
+
+**Function index space (imports-first):** host imports (`env.print_i32`, `env.print_str`) occupy indices `0..k-1`; user functions follow at `k..`. This mirrors WASM's function index space. Codegen emits `call $name` by name, so indices are only used for IR `CallExpr`/`CallStmt` resolution.
+
+**Canonical lowering — array literal / bounds-checked index:** both lower to `BlockExpr` with synthetic temp locals (evaluate-once), so side-effecting subexpressions run exactly once and the result is left on the stack via WASM `block (result T)`.
 
 ## 5. WASM Control Flow (Critical Constraint)
 
@@ -272,7 +288,9 @@ array<T>: [ length: i32 ][ elements: T × length ]         // T stride: i32=4, f
 
 - A `string`/`array` value is an `i32` pointer to the length field.
 - **Bounds check:** every index operation emits `i < 0 || i >= length ? unreachable : load/store` (folded to a single unsigned compare: `(u32)i >= length`).
-- String literals become data segments with the length word prepended; identical literals are deduplicated at compile time.
+- String literals become data segments with the length word prepended; identical literals are deduplicated at compile time. Static data starts at `0x0400`; `heapBase = align8(0x0400 + totalStaticBytes)`.
+- Host builtins `print_i32(i32)` and `print_str(string)` are void imports from `env`; they are pre-seeded in the type checker's signature table and only emitted into `IRModule.imports` when used.
+- Strings are immutable: assigning to a string element is a type error. Array element assignment is supported.
 - No garbage collection: memory is reclaimed only by module re-instantiation (each playground Run creates a fresh instance, so leaks are bounded by a single run).
 
 ## 8. Pipeline Data Flow

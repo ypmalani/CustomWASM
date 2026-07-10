@@ -118,6 +118,15 @@ function foldExpr(expr: IRExpr): IRExpr {
       }
       return { kind: "IfExpr", type: expr.type, cond, then, else_ };
     }
+    case "Alloc":
+      return { ...expr, size: foldExpr(expr.size) };
+    case "BlockExpr":
+      // Fold body stmts and result; never collapse the block (side effects).
+      return {
+        ...expr,
+        body: expr.body.map(foldStmt),
+        result: foldExpr(expr.result),
+      };
     default: {
       const _exhaustive: never = expr;
       throw new Error(
@@ -176,6 +185,9 @@ function foldI32BinOp(op: IRBinOp, left: number, right: number): number | null {
       return left & right;
     case "or":
       return left | right;
+    case "ge_u":
+      // Unsigned compare — used for bounds checks; fold with >>> 0.
+      return (left >>> 0) >= (right >>> 0) ? 1 : 0;
     default: {
       const _exhaustive: never = op;
       throw new Error(`constantFold: unhandled i32 binop '${_exhaustive}'`);
@@ -212,6 +224,8 @@ function foldF64BinOp(op: IRBinOp, left: number, right: number): number {
     case "and":
     case "or":
       throw new Error(`constantFold: ${op} is not defined for f64`);
+    case "ge_u":
+      throw new Error("constantFold: ge_u is not defined for f64");
     default: {
       const _exhaustive: never = op;
       throw new Error(`constantFold: unhandled f64 binop '${_exhaustive}'`);

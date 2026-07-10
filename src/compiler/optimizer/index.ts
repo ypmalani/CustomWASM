@@ -109,6 +109,13 @@ function countExpr(expr: IRExpr): number {
       n += countExpr(expr.then);
       n += countExpr(expr.else_);
       break;
+    case "Alloc":
+      n += countExpr(expr.size);
+      break;
+    case "BlockExpr":
+      n += countStmts(expr.body);
+      n += countExpr(expr.result);
+      break;
     default: {
       const _exhaustive: never = expr;
       throw new Error(

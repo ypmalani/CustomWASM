@@ -116,7 +116,7 @@ function stmtToTree(stmt: IRStmt): TreeNode {
     case "Store":
       return {
         label: "Store",
-        detail: `offset=${stmt.offset}`,
+        detail: `${stmt.type}${stmt.byte ? " byte" : ""} offset=${stmt.offset}`,
         children: [exprToTree(stmt.addr), exprToTree(stmt.value)],
       };
     case "CallStmt":
@@ -179,7 +179,7 @@ function exprToTree(expr: IRExpr): TreeNode {
     case "Load":
       return {
         label: "Load",
-        detail: `${expr.type} offset=${expr.offset}`,
+        detail: `${expr.type}${expr.byte ? " byte" : ""} offset=${expr.offset}`,
         children: [exprToTree(expr.addr)],
       };
     case "DataPtr":
@@ -196,6 +196,21 @@ function exprToTree(expr: IRExpr): TreeNode {
           { label: "Cond", children: [exprToTree(expr.cond)] },
           { label: "Then", children: [exprToTree(expr.then)] },
           { label: "Else", children: [exprToTree(expr.else_)] },
+        ],
+      };
+    case "Alloc":
+      return {
+        label: "Alloc",
+        detail: "i32",
+        children: [exprToTree(expr.size)],
+      };
+    case "BlockExpr":
+      return {
+        label: "BlockExpr",
+        detail: expr.type,
+        children: [
+          { label: "Body", children: expr.body.map(stmtToTree) },
+          { label: "Result", children: [exprToTree(expr.result)] },
         ],
       };
     default: {
