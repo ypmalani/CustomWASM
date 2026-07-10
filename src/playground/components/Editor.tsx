@@ -52,41 +52,47 @@ const editorTheme = EditorView.theme(
     "&": {
       height: "100%",
       fontSize: "0.875rem",
-      backgroundColor: "#0f172a",
-      color: "#f1f5f9",
+      backgroundColor: "#12181F",
+      color: "#E8EDF5",
+    },
+    "&.cm-focused": {
+      outline: "2px solid #4ADEA8",
+      outlineOffset: "-2px",
     },
     ".cm-scroller": {
       fontFamily:
-        'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
-      lineHeight: "1.5",
+        '"IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+      lineHeight: "1.55",
     },
     ".cm-content": {
       padding: "1rem 0",
-      caretColor: "#e2e8f0",
+      caretColor: "#E8EDF5",
     },
     ".cm-gutters": {
-      backgroundColor: "#0f172a",
-      color: "#64748b",
+      backgroundColor: "#12181F",
+      color: "#6B7C93",
       border: "none",
+      borderRight: "1px solid #243041",
     },
     ".cm-activeLineGutter": {
-      backgroundColor: "#1e293b",
+      backgroundColor: "#1a222d",
+      color: "#8BA4C7",
     },
     ".cm-activeLine": {
-      backgroundColor: "#1e293b66",
+      backgroundColor: "#1a222d66",
     },
     "&.cm-focused .cm-cursor": {
-      borderLeftColor: "#e2e8f0",
+      borderLeftColor: "#4ADEA8",
     },
     "&.cm-focused .cm-selectionBackground, .cm-selectionBackground": {
-      backgroundColor: "#334155",
+      backgroundColor: "#243041",
     },
     ".cm-diagnostic-error": {
-      textDecoration: "underline wavy #f87171",
+      textDecoration: "underline wavy #F07178",
       textUnderlineOffset: "3px",
     },
     ".cm-diagnostic-warning": {
-      textDecoration: "underline wavy #fbbf24",
+      textDecoration: "underline wavy #E8A87C",
       textUnderlineOffset: "3px",
     },
   },
@@ -106,18 +112,22 @@ function buildExtensions(onChange: (value: string) => void): Extension[] {
         onChange(update.state.doc.toString());
       }
     }),
-    EditorView.domEventHandlers({
-      // Keep focus ring off to match prior textarea look
-    }),
   ];
 }
 
-export function Editor() {
+export interface EditorProps {
+  /** Fired when the user focuses into the editor (e.g. to cancel autoplay). */
+  onUserFocus?: () => void;
+}
+
+export function Editor({ onUserFocus }: EditorProps) {
   const { source, setSource, result } = usePlayground();
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const setSourceRef = useRef(setSource);
   setSourceRef.current = setSource;
+  const onUserFocusRef = useRef(onUserFocus);
+  onUserFocusRef.current = onUserFocus;
 
   // Mount once
   useEffect(() => {
@@ -160,12 +170,22 @@ export function Editor() {
     });
   }, [result.diagnostics]);
 
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host) return;
+    const onFocusIn = () => {
+      onUserFocusRef.current?.();
+    };
+    host.addEventListener("focusin", onFocusIn);
+    return () => host.removeEventListener("focusin", onFocusIn);
+  }, []);
+
   return (
     <div
       ref={hostRef}
       aria-label="Source editor"
       data-testid="source-editor"
-      className="h-full w-full overflow-hidden bg-slate-900"
+      className="h-full w-full overflow-hidden bg-panel"
     />
   );
 }

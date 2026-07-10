@@ -1,1 +1,85 @@
 @import "tailwindcss";
+
+@theme {
+  --color-ink: #0a0e14;
+  --color-panel: #12181f;
+  --color-rule: #243041;
+  --color-signal: #4adea8;
+  --color-steel: #8ba4c7;
+  --color-copper: #e8a87c;
+  --color-fg: #e8edf5;
+  --color-muted: #6b7c93;
+  --color-error: #f07178;
+
+  --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco,
+    Consolas, monospace;
+}
+
+@layer base {
+  html {
+    font-family: var(--font-sans);
+  }
+
+  body {
+    background-color: var(--color-ink);
+    color: var(--color-fg);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-signal);
+    outline-offset: 2px;
+  }
+}
+
+/* Signature: pipeline stage cascade */
+@keyframes stage-lit {
+  from {
+    opacity: 0.35;
+    color: var(--color-muted);
+  }
+  to {
+    opacity: 1;
+    color: var(--color-signal);
+  }
+}
+
+@keyframes pane-crossfade {
+  from {
+    opacity: 0.55;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes stack-push {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.pipeline-stage--lit {
+  animation: stage-lit 80ms ease-out forwards;
+}
+
+.pane-crossfade {
+  animation: pane-crossfade 180ms ease-out;
+}
+
+.stack-cell {
+  animation: stack-push 120ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pipeline-stage--lit,
+  .pane-crossfade,
+  .stack-cell {
+    animation: none !important;
+  }
+}

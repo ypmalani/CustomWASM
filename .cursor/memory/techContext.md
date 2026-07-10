@@ -20,14 +20,15 @@
   - `src/compiler/typechecker.ts` — `check(ast: Program): { typedProgram: TypedProgram | null; diagnostics: Diagnostic[] }`
   - `src/compiler/lower.ts` — `lower(typed: TypedProgram): IRModule`
   - `src/compiler/optimizer/` — `optimize(ir: IRModule, passes: Pass[]): IRModule`
-  - `src/compiler/codegen.ts` — `emit(ir: IRModule): string` (WAT text)
+  - `src/compiler/codegen.ts` — `emit(ir: IRModule): string` (WAT text; walk lives in `watOps.ts`)
+  - `src/compiler/stepper.ts` — `trace(ir: IRModule): TraceResult` (stack-machine observation over the same `WatOp[]` stream)
   - `src/compiler/pipeline.ts` — orchestrates all stages, returns every intermediate artifact for the UI.
 - **Visitor pattern** for all tree traversals. One generic visitor interface per tree (AST, IR); passes implement only the node handlers they care about. No pass mutates its input tree — every transform returns a new tree.
 - **Diagnostics, not exceptions:** stages return `Diagnostic { message, span, severity }` arrays; only internal invariant violations throw.
 
 ## Frontend Playground (React + Vite + Tailwind)
 
-- Split-pane layout: source editor (left), tabbed inspector (right) with **AST | IR | Optimized IR | WAT | Output | Docs** tabs. The Docs tab shows a grammar-generated language reference and a memory-layout diagram. The source editor is CodeMirror 6 with diagnostic squiggle underlines.
+- Split-pane layout: source editor (left), tabbed inspector (right) with **AST | IR | Optimized IR | WAT | Stepper | Output | Docs** tabs. The Docs tab shows a grammar-generated language reference and a memory-layout diagram. The Stepper tab animates the WASM value stack from `trace(ir)` (no interpretation in the UI). The source editor is CodeMirror 6 with diagnostic squiggle underlines.
 - Compilation runs on debounced (~300ms) source changes; execution only on explicit Run.
 - Tailwind for all styling; no component library required. Collapsible tree view is a small recursive component shared by AST and IR tabs.
 - The compiler is imported directly into the frontend as a workspace-local TypeScript module — same code runs in tests and browser.

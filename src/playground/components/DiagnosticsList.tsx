@@ -10,16 +10,20 @@ export function DiagnosticsList({ diagnostics }: DiagnosticsListProps) {
   return (
     <ul
       data-testid="diagnostics-list"
-      className="space-y-1 border-b border-red-900/50 bg-red-950/40 px-3 py-2 text-sm"
+      className="space-y-1 border-b border-error/30 bg-error/10 px-3 py-2 text-sm"
       role="list"
       aria-label="Diagnostics"
     >
       {diagnostics.map((d, i) => (
-        <li key={`${d.span.start}-${i}`} className="font-mono text-red-300">
-          <span className="text-red-400">
+        <li
+          key={`${d.span.start}-${i}`}
+          tabIndex={0}
+          className="rounded px-1 font-mono text-error focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-signal"
+        >
+          <span className="text-copper">
             {d.span.line}:{d.span.col}
           </span>{" "}
-          {d.message}
+          <span className="text-fg/90">{d.message}</span>
         </li>
       ))}
     </ul>

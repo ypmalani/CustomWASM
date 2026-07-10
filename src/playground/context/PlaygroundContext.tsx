@@ -9,13 +9,8 @@ import {
 import { compile, type CompileResult } from "../../compiler/pipeline.js";
 import { useDebouncedValue } from "../hooks/useDebouncedValue.js";
 import { useWabt, type WabtModule } from "../hooks/useWabt.js";
+import { readInitialSource } from "../lib/introSource.js";
 import { runWasm } from "../lib/runWasm.js";
-
-const DEFAULT_SOURCE = `fn main() -> i32 {
-  let x = 2 + 3 * 4;
-  return x;
-}
-`;
 
 export interface PlaygroundContextValue {
   source: string;
@@ -32,7 +27,7 @@ export interface PlaygroundContextValue {
 const PlaygroundContext = createContext<PlaygroundContextValue | null>(null);
 
 export function PlaygroundProvider({ children }: { children: ReactNode }) {
-  const [source, setSource] = useState(DEFAULT_SOURCE);
+  const [source, setSource] = useState(readInitialSource);
   const debouncedSource = useDebouncedValue(source, 300);
   const result = useMemo(
     () => compile(debouncedSource),

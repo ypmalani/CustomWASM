@@ -222,6 +222,8 @@ a || b   ⇒   IfExpr(cond: a, then: Const(1), else_: b)
 
 **Codegen consumes IR only.** The WAT emitter (`emit(ir: IRModule)`) takes the lowered IR as its sole input. The typed AST is never a codegen input after Phase 5.
 
+**Shared instruction stream (`WatOp[]`):** codegen's post-order `emitExpr` / structured `emitStmt` walk (in `watOps.ts`) lowers each function body to a `WatOp[]` sequence. `emit()` pretty-prints that stream to WAT text; `trace()` (in `stepper.ts`) interprets the same stream as a stack machine and records per-instruction `Step` snapshots (stack, locals). The stepper is observation-only — it must not change compiler output or program semantics. Final stepped results are regression-checked against real `wabt.js` execution.
+
 **Function index space (imports-first):** host imports (`env.print_i32`, `env.print_str`) occupy indices `0..k-1`; user functions follow at `k..`. This mirrors WASM's function index space. Codegen emits `call $name` by name, so indices are only used for IR `CallExpr`/`CallStmt` resolution.
 
 **Canonical lowering — array literal / bounds-checked index:** both lower to `BlockExpr` with synthetic temp locals (evaluate-once), so side-effecting subexpressions run exactly once and the result is left on the stack via WASM `block (result T)`.

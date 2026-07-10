@@ -19,7 +19,7 @@ function renderMarkdown(md: string) {
       const line = content[j]!;
       if (line.startsWith("# ")) {
         elements.push(
-          <h1 key={`h1-${j}`} className="mb-2 text-lg font-semibold text-slate-100">
+          <h1 key={`h1-${j}`} className="mb-2 font-sans text-lg font-semibold text-fg">
             {line.slice(2)}
           </h1>,
         );
@@ -28,7 +28,7 @@ function renderMarkdown(md: string) {
         elements.push(
           <h2
             key={`h2-${j}`}
-            className="mb-2 mt-6 border-b border-slate-800 pb-1 text-sm font-semibold uppercase tracking-wide text-sky-300"
+            className="mb-2 mt-6 border-b border-rule pb-1 font-sans text-xs font-semibold tracking-[0.12em] text-steel uppercase"
           >
             {line.slice(3)}
           </h2>,
@@ -36,7 +36,7 @@ function renderMarkdown(md: string) {
         j++;
       } else if (line.startsWith("### ")) {
         elements.push(
-          <h3 key={`h3-${j}`} className="mb-1 mt-4 font-mono text-sm text-slate-200">
+          <h3 key={`h3-${j}`} className="mb-1 mt-4 font-mono text-sm text-fg">
             {line.slice(4).replace(/`/g, "")}
           </h3>,
         );
@@ -53,7 +53,7 @@ function renderMarkdown(md: string) {
         elements.push(
           <pre
             key={`code-${j}`}
-            className="mb-2 overflow-x-auto rounded bg-slate-900 p-3 font-mono text-xs text-emerald-300"
+            className="mb-2 overflow-x-auto rounded border border-rule bg-panel p-3 font-mono text-xs text-signal"
             data-lang={fence || undefined}
           >
             {code.join("\n")}
@@ -63,7 +63,7 @@ function renderMarkdown(md: string) {
         j++;
       } else {
         elements.push(
-          <p key={`p-${j}`} className="mb-2 text-sm text-slate-400">
+          <p key={`p-${j}`} className="mb-2 font-sans text-sm text-muted">
             {line.replace(/`([^`]+)`/g, "$1")}
           </p>,
         );
@@ -83,12 +83,12 @@ export function DocsTab() {
   return (
     <div
       data-testid="docs-tab"
-      className="h-full overflow-auto p-4 text-slate-300"
+      className="h-full overflow-auto bg-ink p-4 text-fg"
     >
       <section aria-label="Language reference" className="mb-8">
         {renderMarkdown(languageReference)}
       </section>
-      <section aria-label="Memory layout" className="border-t border-slate-800 pt-6">
+      <section aria-label="Memory layout" className="border-t border-rule pt-6">
         <MemoryLayoutDiagram />
       </section>
     </div>

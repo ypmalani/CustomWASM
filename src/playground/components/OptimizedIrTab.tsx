@@ -13,7 +13,7 @@ export function OptimizedIrTab({ ir, optimizedIr }: OptimizedIrTabProps) {
     return (
       <div
         data-testid="optimized-ir-tab"
-        className="p-4 text-sm text-slate-400"
+        className="p-4 font-sans text-sm text-muted"
       >
         Fix errors to generate optimized IR.
       </div>
@@ -29,31 +29,30 @@ export function OptimizedIrTab({ ir, optimizedIr }: OptimizedIrTabProps) {
   return (
     <div
       data-testid="optimized-ir-tab"
-      className="flex h-full flex-col overflow-hidden"
+      className="flex h-full flex-col overflow-hidden bg-ink"
     >
-      <div className="flex shrink-0 items-center gap-3 border-b border-slate-800 px-4 py-2 text-xs">
-        <span className="rounded bg-slate-800 px-2 py-1 text-slate-300">
-          Unopt: <span className="font-mono text-amber-200">{unoptCount}</span>
+      <div className="flex shrink-0 items-center gap-4 border-b border-rule px-4 py-2 text-xs">
+        <span className="text-muted">
+          Unopt:{" "}
+          <span className="font-mono text-copper">{unoptCount}</span>
         </span>
-        <span className="rounded bg-slate-800 px-2 py-1 text-slate-300">
-          Opt: <span className="font-mono text-emerald-300">{optCount}</span>
+        <span className="text-muted">
+          Opt: <span className="font-mono text-signal">{optCount}</span>
         </span>
-        <span className="rounded bg-slate-800 px-2 py-1 text-slate-300">
+        <span className="text-muted">
           Δ:{" "}
           <span
             className={
-              delta > 0
-                ? "font-mono text-emerald-300"
-                : "font-mono text-slate-400"
+              delta > 0 ? "font-mono text-signal" : "font-mono text-muted"
             }
           >
             −{delta} ({pct}%)
           </span>
         </span>
       </div>
-      <div className="grid min-h-0 flex-1 grid-cols-2 divide-x divide-slate-800">
+      <div className="grid min-h-0 flex-1 grid-cols-1 divide-y divide-rule sm:grid-cols-2 sm:divide-x sm:divide-y-0">
         <div className="flex min-h-0 flex-col overflow-hidden">
-          <div className="shrink-0 border-b border-slate-800 px-3 py-1.5 text-xs font-medium uppercase tracking-wide text-slate-500">
+          <div className="shrink-0 border-b border-rule px-3 py-1.5 font-sans text-[10px] font-medium tracking-[0.12em] text-muted uppercase">
             Unoptimized IR
           </div>
           <div className="min-h-0 flex-1 overflow-auto">
@@ -61,7 +60,7 @@ export function OptimizedIrTab({ ir, optimizedIr }: OptimizedIrTabProps) {
           </div>
         </div>
         <div className="flex min-h-0 flex-col overflow-hidden">
-          <div className="shrink-0 border-b border-slate-800 px-3 py-1.5 text-xs font-medium uppercase tracking-wide text-slate-500">
+          <div className="shrink-0 border-b border-rule px-3 py-1.5 font-sans text-[10px] font-medium tracking-[0.12em] text-muted uppercase">
             Optimized IR
           </div>
           <div className="min-h-0 flex-1 overflow-auto">

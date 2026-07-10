@@ -11,9 +11,9 @@ export function AstTab({ ast, hasErrors }: AstTabProps) {
   const tree = astToTree(ast);
 
   return (
-    <div data-testid="ast-tab" className="h-full overflow-auto">
+    <div data-testid="ast-tab" className="h-full overflow-auto bg-ink">
       {hasErrors && (
-        <p className="border-b border-amber-900/40 bg-amber-950/30 px-3 py-2 text-xs text-amber-200">
+        <p className="border-b border-copper/30 bg-copper/10 px-3 py-2 text-xs text-copper">
           Parse errors present — showing partial AST.
         </p>
       )}

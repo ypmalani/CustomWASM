@@ -5,7 +5,7 @@ interface WatTabProps {
 export function WatTab({ wat }: WatTabProps) {
   if (wat === null) {
     return (
-      <div data-testid="wat-tab" className="p-4 text-sm text-slate-400">
+      <div data-testid="wat-tab" className="p-4 font-sans text-sm text-muted">
         Fix errors to generate WAT.
       </div>
     );
@@ -14,7 +14,7 @@ export function WatTab({ wat }: WatTabProps) {
   return (
     <pre
       data-testid="wat-tab"
-      className="h-full overflow-auto p-4 font-mono text-sm text-emerald-200 whitespace-pre"
+      className="h-full overflow-auto bg-ink p-4 font-mono text-sm text-signal whitespace-pre"
     >
       {wat}
     </pre>

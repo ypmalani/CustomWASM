@@ -27,7 +27,7 @@ function TreeNodeView({
             type="button"
             aria-label={expanded ? `Collapse ${node.label}` : `Expand ${node.label}`}
             aria-expanded={expanded}
-            className="mt-0.5 inline-flex h-4 w-4 shrink-0 items-center justify-center rounded text-slate-400 hover:bg-slate-800 hover:text-slate-200"
+            className="mt-0.5 inline-flex h-4 w-4 shrink-0 items-center justify-center rounded text-muted hover:bg-rule hover:text-fg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-signal"
             onClick={() => setExpanded((v) => !v)}
           >
             {expanded ? "▾" : "▸"}
@@ -35,9 +35,9 @@ function TreeNodeView({
         ) : (
           <span className="inline-block h-4 w-4 shrink-0" aria-hidden />
         )}
-        <span className="text-sky-300">{node.label}</span>
+        <span className="text-steel">{node.label}</span>
         {node.detail !== undefined && (
-          <span className="text-amber-200"> {node.detail}</span>
+          <span className="text-copper"> {node.detail}</span>
         )}
       </div>
       {hasChildren && expanded && (
@@ -56,10 +56,10 @@ function TreeNodeView({
   );
 }
 
-/** Recursive collapsible tree over TreeNode — reusable by AST and (later) IR tabs. */
+/** Recursive collapsible tree over TreeNode — reusable by AST and IR tabs. */
 export function TreeView({ node, defaultExpanded = true }: TreeViewProps) {
   return (
-    <div data-testid="tree-view" className="overflow-auto p-2">
+    <div data-testid="tree-view" className="overflow-auto p-3">
       <TreeNodeView node={node} defaultExpanded={defaultExpanded} />
     </div>
   );

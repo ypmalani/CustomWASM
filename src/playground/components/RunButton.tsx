@@ -20,7 +20,7 @@ export function RunButton() {
       title={title}
       disabled={disabled}
       onClick={() => void run()}
-      className="rounded bg-emerald-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-emerald-500 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400"
+      className="rounded bg-signal px-4 py-1.5 font-sans text-sm font-medium text-ink transition-colors hover:brightness-110 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-signal disabled:cursor-not-allowed disabled:bg-rule disabled:text-muted disabled:hover:brightness-100"
     >
       {running ? "Running…" : "Run"}
     </button>
