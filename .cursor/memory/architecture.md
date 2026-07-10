@@ -143,7 +143,9 @@ type IRExpr =
   | { kind: "UnOp";     type: WasmType; op: "eqz" | "neg"; operand: IRExpr }
   | { kind: "CallExpr"; type: WasmType; funcIndex: number; args: IRExpr[] }
   | { kind: "Load";     type: WasmType; addr: IRExpr; offset: number }
-  | { kind: "DataPtr";  type: "i32"; segmentOffset: number };  // static strings
+  | { kind: "DataPtr";  type: "i32"; segmentOffset: number }  // static strings
+  // Value-producing conditional; emits WASM `if (result T)`. Used for short-circuit &&/||.
+  | { kind: "IfExpr";   type: WasmType; cond: IRExpr; then: IRExpr; else_: IRExpr };
 
 // i32.add, i32.mul, i32.div_s, i32.rem_s, i32.lt_s, f64.add, ... (typed by `type`)
 type IRBinOp = "add" | "sub" | "mul" | "div" | "rem"
@@ -196,6 +198,17 @@ while (c) body   ⇒   Block L_exit {
 ```
 
 `Br`/`BrIf` targets are **relative label depths** at emission time; the lowering pass tracks the enclosing label stack to compute them, exactly as WAT requires.
+
+**Canonical lowering — short-circuit `&&` / `||`:**
+
+```
+a && b   ⇒   IfExpr(cond: a, then: b, else_: Const(0))
+a || b   ⇒   IfExpr(cond: a, then: Const(1), else_: b)
+```
+
+`IfExpr` maps 1:1 onto WASM `if (result T) ... else ... end`, preserving true short-circuit evaluation (the untaken arm is never evaluated). Eager `and`/`or` IRBinOps are reserved for non-short-circuit uses; they are not used for source `&&`/`||`.
+
+**Codegen consumes IR only.** The WAT emitter (`emit(ir: IRModule)`) takes the lowered IR as its sole input. The typed AST is never a codegen input after Phase 5.
 
 ## 5. WASM Control Flow (Critical Constraint)
 

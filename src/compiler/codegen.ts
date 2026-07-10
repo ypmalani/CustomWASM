@@ -1,54 +1,32 @@
-import type { Block, Expr, FunctionDecl, Program, Stmt } from "./ast.js";
+import type {
+  IRBinOp,
+  IRExpr,
+  IRFunction,
+  IRModule,
+  IRStmt,
+  WasmType,
+} from "./ir.js";
 
 /**
- * Direct AST → WAT codegen for the Phase 3 subset:
- *   - fn declarations with parameters and optional return type
- *   - let bindings, assignment, lexical scoping with shadowing
- *   - if/else, while (structured control flow)
- *   - arithmetic, comparisons, logical ops (&&/|| short-circuit), unary -/!
- *   - bool/int literals, identifiers, function calls (incl. recursion)
- *   - main is exported; all values are i32 (bool lowers to i32)
- *
- * Out-of-subset nodes (f64/string/array/index) throw an internal error.
+ * IR → WAT codegen.
+ * Expressions emit post-order onto the stack machine; statements map 1:1
+ * onto WASM structured control flow (block/loop/if/br/br_if/return).
+ * Locals are referenced by the dense numeric indices already assigned in IR.
  */
 
-interface FuncSig {
-  arity: number;
-  hasResult: boolean;
-}
-
-type ScopeStack = Array<Map<string, number>>;
-
-interface EmitCtx {
-  signatures: Map<string, FuncSig>;
-  /** Pre-assigned dense local index for each Let statement node. */
-  letIndices: Map<Stmt, number>;
-  /** Lexical scope stack: each Block pushes a frame. */
-  scopes: ScopeStack;
-}
-
-export function emit(program: Program): string {
-  const signatures = buildSignatures(program);
+export function emit(ir: IRModule): string {
   const lines: string[] = [];
   lines.push("(module");
 
-  for (const fn of program.functions) {
-    emitFunction(fn, lines, 1, signatures);
+  // Build funcIndex → name for call emission.
+  const funcNames = ir.functions.map((f) => f.name);
+
+  for (const fn of ir.functions) {
+    emitFunction(fn, lines, 1, funcNames);
   }
 
   lines.push(")");
   return lines.join("\n") + "\n";
-}
-
-function buildSignatures(program: Program): Map<string, FuncSig> {
-  const signatures = new Map<string, FuncSig>();
-  for (const fn of program.functions) {
-    signatures.set(fn.name, {
-      arity: fn.params.length,
-      hasResult: fn.returnType !== undefined,
-    });
-  }
-  return signatures;
 }
 
 function indent(level: number): string {
@@ -56,346 +34,231 @@ function indent(level: number): string {
 }
 
 function emitFunction(
-  fn: FunctionDecl,
+  fn: IRFunction,
   lines: string[],
   level: number,
-  signatures: Map<string, FuncSig>,
+  funcNames: string[],
 ): void {
-  // Params occupy indices 0..n-1; lets continue from n.
-  const letIndices = new Map<Stmt, number>();
-  let nextIndex = fn.params.length;
-  nextIndex = allocateLetIndices(fn.body, letIndices, nextIndex);
-  const numLets = nextIndex - fn.params.length;
-
-  const isMain = fn.name === "main";
-  const exportPart = isMain ? ` (export "main")` : "";
-  // WASM header order: name, export, params, result, locals
-  const paramPart = fn.params.map(() => " (param i32)").join("");
-  const resultPart = fn.returnType ? " (result i32)" : "";
-  const localsPart = Array.from({ length: numLets }, () => " (local i32)").join(
-    "",
-  );
+  const exportPart = fn.exported ? ` (export "${fn.name}")` : "";
+  const paramPart = fn.params.map((t) => ` (param ${t})`).join("");
+  const resultPart = fn.result ? ` (result ${fn.result})` : "";
+  const localsPart = fn.locals.map((t) => ` (local ${t})`).join("");
 
   lines.push(
     `${indent(level)}(func $${fn.name}${exportPart}${paramPart}${resultPart}${localsPart}`,
   );
 
-  // Seed the outermost scope with parameters.
-  const scopes: ScopeStack = [new Map()];
-  for (let i = 0; i < fn.params.length; i++) {
-    scopes[0]!.set(fn.params[i]!.name, i);
-  }
-
-  const ctx: EmitCtx = { signatures, letIndices, scopes };
-  emitBlock(fn.body, lines, level + 1, ctx);
-
-  // Result functions need a trailing unreachable so WASM validation accepts
-  // the function end when the last statement is an if/while whose arms
-  // return (control never falls through, but the type checker still wants
-  // an i32 or an unreachable end). Definite-return analysis is Phase 4.
-  if (fn.returnType) {
-    lines.push(`${indent(level + 1)}unreachable`);
+  for (const stmt of fn.body) {
+    emitStmt(stmt, lines, level + 1, funcNames);
   }
 
   lines.push(`${indent(level)})`);
 }
 
-/** Assign a unique dense local index to every Let node (depth-first). */
-function allocateLetIndices(
-  block: Block,
-  letIndices: Map<Stmt, number>,
-  nextIndex: number,
-): number {
-  for (const stmt of block.statements) {
-    nextIndex = allocateLetIndicesStmt(stmt, letIndices, nextIndex);
-  }
-  return nextIndex;
-}
-
-function allocateLetIndicesStmt(
-  stmt: Stmt,
-  letIndices: Map<Stmt, number>,
-  nextIndex: number,
-): number {
-  switch (stmt.kind) {
-    case "Let":
-      letIndices.set(stmt, nextIndex);
-      return nextIndex + 1;
-    case "Block":
-      return allocateLetIndices(stmt, letIndices, nextIndex);
-    case "If": {
-      nextIndex = allocateLetIndices(stmt.then, letIndices, nextIndex);
-      if (stmt.else_) {
-        if (stmt.else_.kind === "Block") {
-          nextIndex = allocateLetIndices(stmt.else_, letIndices, nextIndex);
-        } else {
-          nextIndex = allocateLetIndicesStmt(stmt.else_, letIndices, nextIndex);
-        }
-      }
-      return nextIndex;
-    }
-    case "While":
-      return allocateLetIndices(stmt.body, letIndices, nextIndex);
-    case "Assign":
-    case "Return":
-    case "ExprStmt":
-      return nextIndex;
-    default: {
-      const _exhaustive: never = stmt;
-      void _exhaustive;
-      return nextIndex;
-    }
-  }
-}
-
-function resolveLocal(name: string, scopes: ScopeStack): number {
-  for (let i = scopes.length - 1; i >= 0; i--) {
-    const idx = scopes[i]!.get(name);
-    if (idx !== undefined) return idx;
-  }
-  throw new Error(`codegen: unbound identifier '${name}'`);
-}
-
-function emitBlock(
-  block: Block,
-  lines: string[],
-  level: number,
-  ctx: EmitCtx,
-): void {
-  ctx.scopes.push(new Map());
-  for (const stmt of block.statements) {
-    emitStmt(stmt, lines, level, ctx);
-  }
-  ctx.scopes.pop();
-}
-
 function emitStmt(
-  stmt: Stmt,
+  stmt: IRStmt,
   lines: string[],
   level: number,
-  ctx: EmitCtx,
+  funcNames: string[],
 ): void {
   switch (stmt.kind) {
-    case "Let": {
-      emitExpr(stmt.init, lines, level, ctx);
-      const idx = ctx.letIndices.get(stmt);
-      if (idx === undefined) {
-        throw new Error(`codegen: missing local index for let '${stmt.name}'`);
+    case "Block": {
+      lines.push(`${indent(level)}block`);
+      for (const s of stmt.body) {
+        emitStmt(s, lines, level + 1, funcNames);
       }
-      lines.push(`${indent(level)}local.set ${idx}`);
-      ctx.scopes[ctx.scopes.length - 1]!.set(stmt.name, idx);
+      lines.push(`${indent(level)}end`);
       break;
     }
-    case "Assign": {
-      if (stmt.target.kind !== "Identifier") {
-        throw new Error("codegen: indexed assignment is not supported");
+    case "Loop": {
+      lines.push(`${indent(level)}loop`);
+      for (const s of stmt.body) {
+        emitStmt(s, lines, level + 1, funcNames);
       }
-      emitExpr(stmt.value, lines, level, ctx);
-      const idx = resolveLocal(stmt.target.name, ctx.scopes);
-      lines.push(`${indent(level)}local.set ${idx}`);
+      lines.push(`${indent(level)}end`);
       break;
     }
-    case "If": {
-      emitExpr(stmt.cond, lines, level, ctx);
+    case "IfStmt": {
+      emitExpr(stmt.cond, lines, level, funcNames);
       lines.push(`${indent(level)}if`);
-      emitBlock(stmt.then, lines, level + 1, ctx);
+      for (const s of stmt.then) {
+        emitStmt(s, lines, level + 1, funcNames);
+      }
       if (stmt.else_) {
         lines.push(`${indent(level)}else`);
-        if (stmt.else_.kind === "Block") {
-          emitBlock(stmt.else_, lines, level + 1, ctx);
-        } else {
-          // Chained else-if: emit as a nested if statement inside the else arm.
-          emitStmt(stmt.else_, lines, level + 1, ctx);
+        for (const s of stmt.else_) {
+          emitStmt(s, lines, level + 1, funcNames);
         }
       }
       lines.push(`${indent(level)}end`);
       break;
     }
-    case "While": {
-      // Canonical lowering:
-      //   block
-      //     loop
-      //       <cond>  i32.eqz  br_if 1   ;; exit when !cond
-      //       <body>
-      //       br 0                      ;; continue
-      //     end
-      //   end
-      lines.push(`${indent(level)}block`);
-      lines.push(`${indent(level + 1)}loop`);
-      emitExpr(stmt.cond, lines, level + 2, ctx);
-      lines.push(`${indent(level + 2)}i32.eqz`);
-      lines.push(`${indent(level + 2)}br_if 1`);
-      emitBlock(stmt.body, lines, level + 2, ctx);
-      lines.push(`${indent(level + 2)}br 0`);
-      lines.push(`${indent(level + 1)}end`);
-      lines.push(`${indent(level)}end`);
+    case "Br": {
+      lines.push(`${indent(level)}br ${stmt.target}`);
+      break;
+    }
+    case "BrIf": {
+      emitExpr(stmt.cond, lines, level, funcNames);
+      lines.push(`${indent(level)}br_if ${stmt.target}`);
+      break;
+    }
+    case "LocalSet": {
+      emitExpr(stmt.value, lines, level, funcNames);
+      lines.push(`${indent(level)}local.set ${stmt.index}`);
+      break;
+    }
+    case "Store": {
+      throw new Error("codegen: Store is not supported (Phase 7)");
+    }
+    case "CallStmt": {
+      for (const arg of stmt.args) {
+        emitExpr(arg, lines, level, funcNames);
+      }
+      const name = funcNames[stmt.funcIndex];
+      if (name === undefined) {
+        throw new Error(`codegen: invalid funcIndex ${stmt.funcIndex}`);
+      }
+      lines.push(`${indent(level)}call $${name}`);
+      break;
+    }
+    case "Drop": {
+      emitExpr(stmt.value, lines, level, funcNames);
+      lines.push(`${indent(level)}drop`);
       break;
     }
     case "Return": {
       if (stmt.value) {
-        emitExpr(stmt.value, lines, level, ctx);
+        emitExpr(stmt.value, lines, level, funcNames);
       }
       lines.push(`${indent(level)}return`);
       break;
     }
-    case "ExprStmt": {
-      emitExpr(stmt.expr, lines, level, ctx);
-      // Drop the result only when the expression yields a value.
-      if (exprYieldsValue(stmt.expr, ctx.signatures)) {
-        lines.push(`${indent(level)}drop`);
-      }
+    case "Unreachable": {
+      lines.push(`${indent(level)}unreachable`);
       break;
     }
-    case "Block":
-      emitBlock(stmt, lines, level, ctx);
-      break;
     default: {
       const _exhaustive: never = stmt;
       throw new Error(
-        `codegen: unhandled statement ${(_exhaustive as Stmt).kind}`,
+        `codegen: unhandled statement ${(_exhaustive as IRStmt).kind}`,
       );
     }
   }
 }
 
-function exprYieldsValue(
-  expr: Expr,
-  signatures: Map<string, FuncSig>,
-): boolean {
-  if (expr.kind === "Call") {
-    const sig = signatures.get(expr.callee);
-    if (sig === undefined) {
-      throw new Error(`codegen: unknown function '${expr.callee}'`);
-    }
-    return sig.hasResult;
-  }
-  return true;
-}
-
 function emitExpr(
-  expr: Expr,
+  expr: IRExpr,
   lines: string[],
   level: number,
-  ctx: EmitCtx,
+  funcNames: string[],
 ): void {
   switch (expr.kind) {
-    case "IntLiteral":
-      lines.push(`${indent(level)}i32.const ${expr.value}`);
-      break;
-    case "BoolLiteral":
-      lines.push(`${indent(level)}i32.const ${expr.value ? 1 : 0}`);
-      break;
-    case "Identifier": {
-      const idx = resolveLocal(expr.name, ctx.scopes);
-      lines.push(`${indent(level)}local.get ${idx}`);
+    case "Const": {
+      lines.push(`${indent(level)}${expr.type}.const ${formatConst(expr.type, expr.value)}`);
       break;
     }
-    case "Unary": {
-      if (expr.op === "-") {
-        lines.push(`${indent(level)}i32.const 0`);
-        emitExpr(expr.operand, lines, level, ctx);
-        lines.push(`${indent(level)}i32.sub`);
-      } else {
-        // !
-        emitExpr(expr.operand, lines, level, ctx);
+    case "LocalGet": {
+      lines.push(`${indent(level)}local.get ${expr.index}`);
+      break;
+    }
+    case "BinOp": {
+      emitExpr(expr.left, lines, level, funcNames);
+      emitExpr(expr.right, lines, level, funcNames);
+      lines.push(`${indent(level)}${binOpInstr(expr.type, expr.op)}`);
+      break;
+    }
+    case "UnOp": {
+      if (expr.op === "eqz") {
+        emitExpr(expr.operand, lines, level, funcNames);
         lines.push(`${indent(level)}i32.eqz`);
-      }
-      break;
-    }
-    case "Binary": {
-      if (expr.op === "&&") {
-        // Short-circuit: <a> if (result i32) <b> else i32.const 0 end
-        emitExpr(expr.left, lines, level, ctx);
-        lines.push(`${indent(level)}if (result i32)`);
-        emitExpr(expr.right, lines, level + 1, ctx);
-        lines.push(`${indent(level)}else`);
-        lines.push(`${indent(level + 1)}i32.const 0`);
-        lines.push(`${indent(level)}end`);
-        break;
-      }
-      if (expr.op === "||") {
-        // Short-circuit: <a> if (result i32) i32.const 1 else <b> end
-        emitExpr(expr.left, lines, level, ctx);
-        lines.push(`${indent(level)}if (result i32)`);
-        lines.push(`${indent(level + 1)}i32.const 1`);
-        lines.push(`${indent(level)}else`);
-        emitExpr(expr.right, lines, level + 1, ctx);
-        lines.push(`${indent(level)}end`);
-        break;
-      }
-
-      emitExpr(expr.left, lines, level, ctx);
-      emitExpr(expr.right, lines, level, ctx);
-      switch (expr.op) {
-        case "+":
-          lines.push(`${indent(level)}i32.add`);
-          break;
-        case "-":
+      } else {
+        // neg: i32 → 0 - x; f64 → f64.neg
+        if (expr.type === "i32") {
+          lines.push(`${indent(level)}i32.const 0`);
+          emitExpr(expr.operand, lines, level, funcNames);
           lines.push(`${indent(level)}i32.sub`);
-          break;
-        case "*":
-          lines.push(`${indent(level)}i32.mul`);
-          break;
-        case "/":
-          lines.push(`${indent(level)}i32.div_s`);
-          break;
-        case "%":
-          lines.push(`${indent(level)}i32.rem_s`);
-          break;
-        case "==":
-          lines.push(`${indent(level)}i32.eq`);
-          break;
-        case "!=":
-          lines.push(`${indent(level)}i32.ne`);
-          break;
-        case "<":
-          lines.push(`${indent(level)}i32.lt_s`);
-          break;
-        case "<=":
-          lines.push(`${indent(level)}i32.le_s`);
-          break;
-        case ">":
-          lines.push(`${indent(level)}i32.gt_s`);
-          break;
-        case ">=":
-          lines.push(`${indent(level)}i32.ge_s`);
-          break;
-        default: {
-          const _exhaustive: never = expr.op;
-          throw new Error(`codegen: unhandled operator '${_exhaustive}'`);
+        } else {
+          emitExpr(expr.operand, lines, level, funcNames);
+          lines.push(`${indent(level)}f64.neg`);
         }
       }
       break;
     }
-    case "Call": {
-      const sig = ctx.signatures.get(expr.callee);
-      if (sig === undefined) {
-        throw new Error(`codegen: unknown function '${expr.callee}'`);
-      }
-      if (expr.args.length !== sig.arity) {
-        throw new Error(
-          `codegen: call to '${expr.callee}' expected ${sig.arity} args, got ${expr.args.length}`,
-        );
-      }
+    case "CallExpr": {
       for (const arg of expr.args) {
-        emitExpr(arg, lines, level, ctx);
+        emitExpr(arg, lines, level, funcNames);
       }
-      lines.push(`${indent(level)}call $${expr.callee}`);
+      const name = funcNames[expr.funcIndex];
+      if (name === undefined) {
+        throw new Error(`codegen: invalid funcIndex ${expr.funcIndex}`);
+      }
+      lines.push(`${indent(level)}call $${name}`);
       break;
     }
-    case "FloatLiteral":
-      throw new Error("codegen: float literals are not supported");
-    case "StringLiteral":
-      throw new Error("codegen: string literals are not supported");
-    case "ArrayLiteral":
-      throw new Error("codegen: array literals are not supported");
-    case "Index":
-      throw new Error("codegen: indexing is not supported");
+    case "IfExpr": {
+      emitExpr(expr.cond, lines, level, funcNames);
+      lines.push(`${indent(level)}if (result ${expr.type})`);
+      emitExpr(expr.then, lines, level + 1, funcNames);
+      lines.push(`${indent(level)}else`);
+      emitExpr(expr.else_, lines, level + 1, funcNames);
+      lines.push(`${indent(level)}end`);
+      break;
+    }
+    case "Load": {
+      throw new Error("codegen: Load is not supported (Phase 7)");
+    }
+    case "DataPtr": {
+      throw new Error("codegen: DataPtr is not supported (Phase 7)");
+    }
     default: {
       const _exhaustive: never = expr;
       throw new Error(
-        `codegen: unhandled expression ${(_exhaustive as Expr).kind}`,
+        `codegen: unhandled expression ${(_exhaustive as IRExpr).kind}`,
       );
+    }
+  }
+}
+
+function formatConst(type: WasmType, value: number): string {
+  if (type === "i32") {
+    return String(value);
+  }
+  // f64: ensure a decimal representation
+  return Number.isInteger(value) ? `${value}.0` : String(value);
+}
+
+function binOpInstr(type: WasmType, op: IRBinOp): string {
+  const prefix = type;
+  switch (op) {
+    case "add":
+      return `${prefix}.add`;
+    case "sub":
+      return `${prefix}.sub`;
+    case "mul":
+      return `${prefix}.mul`;
+    case "div":
+      return type === "i32" ? "i32.div_s" : "f64.div";
+    case "rem":
+      return "i32.rem_s";
+    case "eq":
+      return `${prefix}.eq`;
+    case "ne":
+      return `${prefix}.ne`;
+    case "lt":
+      return type === "i32" ? "i32.lt_s" : "f64.lt";
+    case "le":
+      return type === "i32" ? "i32.le_s" : "f64.le";
+    case "gt":
+      return type === "i32" ? "i32.gt_s" : "f64.gt";
+    case "ge":
+      return type === "i32" ? "i32.ge_s" : "f64.ge";
+    case "and":
+      return "i32.and";
+    case "or":
+      return "i32.or";
+    default: {
+      const _exhaustive: never = op;
+      throw new Error(`codegen: unhandled binop '${_exhaustive}'`);
     }
   }
 }
