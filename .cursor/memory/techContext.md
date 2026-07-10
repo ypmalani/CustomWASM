@@ -17,7 +17,7 @@
 - **Modular pipeline** — each stage is a pure function in its own module with a single entry point:
   - `src/compiler/lexer.ts` — `lex(source: string): Token[]`
   - `src/compiler/parser.ts` — `parse(tokens: Token[]): Program`
-  - `src/compiler/typechecker.ts` — `check(ast: Program): TypedProgram | Diagnostic[]`
+  - `src/compiler/typechecker.ts` — `check(ast: Program): { typedProgram: TypedProgram | null; diagnostics: Diagnostic[] }`
   - `src/compiler/lower.ts` — `lower(typed: TypedProgram): IRModule`
   - `src/compiler/optimizer/` — `optimize(ir: IRModule, passes: Pass[]): IRModule`
   - `src/compiler/codegen.ts` — `emit(ir: IRModule): string` (WAT text)

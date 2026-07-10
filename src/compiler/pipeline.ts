@@ -4,18 +4,21 @@ import type { Diagnostic } from "./diagnostics.js";
 import { lex } from "./lexer.js";
 import { parse } from "./parser.js";
 import type { Token } from "./token.js";
+import type { TypedProgram } from "./typed-ast.js";
+import { check } from "./typechecker.js";
 
 export interface CompileResult {
   tokens: Token[];
   ast: Program;
+  typedAst: TypedProgram | null;
   diagnostics: Diagnostic[];
   wat: string | null;
 }
 
 /**
- * Orchestrates lex → parse → emit.
+ * Orchestrates lex → parse → typecheck → emit.
  * Returns every intermediate artifact for the playground / tests.
- * Codegen is skipped when parse diagnostics are present.
+ * Type checking and codegen are skipped when prior-stage diagnostics are present.
  */
 export function compile(source: string): CompileResult {
   const tokens = lex(source);
@@ -32,6 +35,13 @@ export function compile(source: string): CompileResult {
     }
   }
 
+  let typedAst: TypedProgram | null = null;
+  if (diagnostics.length === 0) {
+    const checked = check(program);
+    diagnostics.push(...checked.diagnostics);
+    typedAst = checked.typedProgram;
+  }
+
   let wat: string | null = null;
   if (diagnostics.length === 0) {
     try {
@@ -46,5 +56,5 @@ export function compile(source: string): CompileResult {
     }
   }
 
-  return { tokens, ast: program, diagnostics, wat };
+  return { tokens, ast: program, typedAst, diagnostics, wat };
 }

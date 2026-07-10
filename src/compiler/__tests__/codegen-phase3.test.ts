@@ -276,7 +276,7 @@ describe("codegen phase 3 (control flow, functions, scoping)", () => {
       `fn id(x: i32) -> i32 { return x; } fn main() -> i32 { return id(5); }`,
       `fn fib(n: i32) -> i32 { if (n <= 1) { return n; } else { return fib(n - 1) + fib(n - 2); } } fn main() -> i32 { return fib(5); }`,
       `fn main() -> i32 { let x = 1; { let x = 2; } return x; }`,
-      `fn main() -> i32 { return 1 == 1 && 2 != 3 || !(false); }`,
+      `fn main() -> i32 { if (1 == 1 && 2 != 3 || !(false)) { return 1; } else { return 0; } }`,
     ];
     for (const src of programs) {
       const { wat, diagnostics } = compile(src);
