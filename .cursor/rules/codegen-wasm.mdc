@@ -1,0 +1,30 @@
+---
+description: Rules for optimizer passes and WAT code generation — S-expressions, stack machine semantics, locals mapping, structured control flow (Phases 5-8)
+globs: src/compiler/codegen.ts,src/compiler/optimizer/**,src/compiler/__tests__/codegen*,src/compiler/__tests__/optimizer*
+alwaysApply: false
+---
+
+# Codegen & Optimizer Rules
+
+Read `.cursor/memory/architecture.md` first — the IR schema, WASM control-flow constraint, and linear memory layout there are the contract.
+
+## Optimization Passes
+- Every pass is a pure `IRModule → IRModule` function; never mutate the input tree. Passes run in a pipeline until fixpoint or a fixed iteration budget.
+- Constant folding must preserve trap semantics: never fold `x / 0` or `x % 0` — leave them to trap at runtime. Fold through `bool` ops and comparisons too.
+- Dead code elimination: remove statements after `Return`/`Br` within a block, prune `IfStmt` arms with constant conditions, drop unreferenced locals (then re-densify local indices consistently).
+- Every pass must be individually toggleable so tests can assert each pass's exact output in isolation.
+
+## WAT Emission
+- Emit well-formed S-expressions with stable indentation (the playground displays this text). Use named function exports; locals are referenced by numeric index.
+- Stack machine discipline: expressions emit post-order (operands first, then the operator). Every value pushed is consumed exactly once — statement-position values that go unused must emit `drop`. The emitter should track virtual stack depth per block and assert it returns to the expected height at each block end.
+- Locals mapping: params occupy indices `0..n-1`, locals follow, matching the IR's dense indices exactly. Declare all locals in the function header (`(local i32)...`) — WASM does not allow mid-body declarations.
+- Memory operations follow the layout in `architecture.md`: length-prefixed objects, 8-byte alignment, bounds checks emitting `unreachable` on failure, `$hp` global for the bump allocator.
+
+## Structured Control Flow (strict)
+- Only `block`, `loop`, `if`/`else`, `br`, `br_if`, `return`, `unreachable` may be emitted for control flow. `br` targets are relative label depths computed from the enclosing label stack at emission time.
+- NEVER attempt jump tables, goto emulation, or CFG restructuring. If an IR shape cannot be expressed with structured control flow, the lowering pass is wrong — fix it there, not in codegen.
+
+## Validation Gate (mandatory before phase completion)
+- Write test cases as `(input source → expected output)` triples: expected optimized IR (golden), expected WAT (golden for small programs), and expected runtime result.
+- Run ALL generated WAT through `wat2wasm` (`wabt.js` `parseWat` + `module.validate()`). Validation proves semantic correctness — stack depth balance, local index bounds, branch depth validity, load/store alignment — not just syntax. Then instantiate and execute, asserting exported results and `print_*` output.
+- Optimizer correctness: every optimized module must produce byte-identical runtime behavior to its unoptimized counterpart across the full test corpus, plus assertions that instruction counts actually decreased on benchmark inputs.

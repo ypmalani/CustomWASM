@@ -1,0 +1,30 @@
+---
+description: Framework rules for scope resolution, symbol tables, static type enforcement, and AST-to-IR lowering (Phases 4-5)
+globs: src/compiler/typechecker.ts,src/compiler/lower.ts,src/compiler/ir.ts,src/compiler/__tests__/typechecker*,src/compiler/__tests__/lower*
+alwaysApply: false
+---
+
+# Type Checker & IR Lowering Rules
+
+Read `.cursor/memory/architecture.md` first — the `Type` union, typing rules 1-8, and the IR schema there are the contract.
+
+## Scope Resolution & Symbol Tables
+- Chained hash-map scopes: each `Block` pushes a scope; lookup walks outward; `let` binds in the innermost scope; shadowing is legal, redeclaration in the same scope is an error.
+- Build the function signature table in a pre-pass over all `FunctionDecl`s so forward references and recursion work.
+- Resolution assigns each variable its final WASM local index (params first, then locals in declaration order) — the IR has no names.
+
+## Static Type Enforcement
+- Implement exactly the rules in `architecture.md`: no implicit `i32`/`f64` coercion, `bool`-only conditions, arity- and type-checked calls, definite-return analysis for non-void functions.
+- Collect diagnostics into an array and keep checking (use an `error` type that unifies with everything to avoid cascades). Never stop at the first error.
+- Output is a typed AST: every expression annotated with its resolved `Type`. Codegen and lowering must never re-infer types.
+
+## AST → IR Lowering
+- Target the tree-structured IR from `architecture.md`. The IR's only control-flow nodes are `Block`, `Loop`, `IfStmt`, `Br`, `BrIf`, `Return`, `Unreachable` — mirroring WASM structured control flow. NEVER introduce basic blocks, gotos, or arbitrary jumps.
+- Lower `while` using the canonical template: `Block { Loop { BrIf(!cond → exit); body; Br(head) } }`. Track the enclosing label stack to compute relative branch depths.
+- Make implicit effects explicit: wrap discarded expression-statement results in `Drop`; desugar `&&`/`||` short-circuiting into `IfStmt` expressions or `select` — decide once and document it.
+- Lowering is total on well-typed input: if the checker passed, lowering must not fail. Any lowering failure is a compiler bug — throw, don't diagnose.
+
+## Validation Gate (mandatory before phase completion)
+- Write test cases as `(input source → expected output)`: ill-typed programs asserting exact diagnostic messages and spans; well-typed programs asserting the lowered IR shape (golden tests).
+- Every lowered program must continue through codegen and pass `wat2wasm` (`wabt.js` `parseWat` + `module.validate()`), proving semantic correctness — stack depth, local indices, branch target depths — not just syntax. Run the resulting binaries and assert runtime results match the pre-IR pipeline.
+- A phase is not complete while any generated WAT fails validation or any runtime regression exists.

@@ -1,0 +1,27 @@
+---
+description: Validation rules for the lexer and parser — token matching, error recovery, source coordinates (Phases 1-3)
+globs: src/compiler/lexer.ts,src/compiler/parser.ts,src/compiler/__tests__/lexer*,src/compiler/__tests__/parser*
+alwaysApply: false
+---
+
+# Lexer & Parser Rules
+
+Read `.cursor/memory/architecture.md` first — the EBNF grammar and AST schema there are the contract. Do not invent syntax or node shapes.
+
+## Token Matching
+- Every token carries a full `Span { start, end, line, col }`. Spans must be exact — tests assert them.
+- Longest-match rule: `<=` lexes as one token, never `<` `=`. Keywords are matched after identifier scanning (`letter` is an identifier, `let` is a keyword).
+- Unknown characters produce an `Error` token with a span and a message; the lexer never throws and never silently skips input.
+
+## Parsing
+- Recursive descent, one function per grammar rule, expression precedence exactly as layered in the EBNF (precedence climbing). Left-associative binary operators.
+- AST nodes must match the discriminated unions in `architecture.md` exactly, including `span` on every node.
+
+## Error Recovery
+- On a parse error, record a `Diagnostic` (message + span, phrased "expected X, found Y") and synchronize: skip tokens until `;`, `}`, or a statement-starting keyword, then continue. One bad statement must not abort the file — the playground needs partial ASTs and multiple diagnostics.
+- Never throw for user input errors; throw only for internal invariant violations.
+
+## Validation Gate (mandatory before phase completion)
+- Write test cases as `(input source → expected output)` pairs: token streams with spans for the lexer; AST shapes (and diagnostic lists for malformed input) for the parser.
+- For any parser work that feeds codegen in the same phase: compile representative programs end-to-end and run the generated WAT through `wat2wasm` (`wabt.js`) with `module.validate()`. This checks semantic correctness — stack depth, local indices, typing — not just syntax. A phase is not done while any generated WAT fails validation.
+- Include adversarial inputs: unterminated strings, deeply nested parens, missing semicolons, keywords as identifiers.
