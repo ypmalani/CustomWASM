@@ -27,7 +27,7 @@
 
 ## Frontend Playground (React + Vite + Tailwind)
 
-- Split-pane layout: source editor (left), tabbed inspector (right) with **AST | Typed AST | IR | Optimized IR | WAT | Output** tabs.
+- Split-pane layout: source editor (left), tabbed inspector (right) with **AST | IR | Optimized IR | WAT | Output | Docs** tabs. The Docs tab shows a grammar-generated language reference and a memory-layout diagram. The source editor is CodeMirror 6 with diagnostic squiggle underlines.
 - Compilation runs on debounced (~300ms) source changes; execution only on explicit Run.
 - Tailwind for all styling; no component library required. Collapsible tree view is a small recursive component shared by AST and IR tabs.
 - The compiler is imported directly into the frontend as a workspace-local TypeScript module — same code runs in tests and browser.

@@ -120,31 +120,44 @@ describe("parser", () => {
   });
 
   it("reports diagnostic for missing semicolon", () => {
-    const { diagnostics } = parseSource(
-      "fn main() -> i32 { let x = 1 return x; }",
-    );
+    const src = "fn main() -> i32 { let x = 1 return x; }";
+    const { diagnostics } = parseSource(src);
     expect(diagnostics.length).toBeGreaterThan(0);
-    expect(diagnostics[0]!.message).toMatch(/expected ';'/);
+    const d = diagnostics[0]!;
+    expect(d.message).toBe("expected ';', found 'return'");
+    expect(src.slice(d.span.start, d.span.end)).toBe("return");
   });
 
   it("reports diagnostic for unbalanced parens", () => {
-    const { diagnostics } = parseSource(
-      "fn main() -> i32 { return (1 + 2; }",
-    );
+    const src = "fn main() -> i32 { return (1 + 2; }";
+    const { diagnostics } = parseSource(src);
     expect(diagnostics.length).toBeGreaterThan(0);
-    expect(diagnostics.some((d) => /expected '\)'/.test(d.message))).toBe(true);
+    const d = diagnostics.find((x) => /expected '\)'/.test(x.message));
+    expect(d).toBeDefined();
+    expect(d!.message).toBe("expected ')', found ';'");
+    expect(src.slice(d!.span.start, d!.span.end)).toBe(";");
   });
 
   it("recovers and continues after a bad statement", () => {
-    const { program, diagnostics } = parseSource(
-      "fn main() -> i32 { let = 1; return 2; }",
-    );
+    const src = "fn main() -> i32 { let = 1; return 2; }";
+    const { program, diagnostics } = parseSource(src);
     expect(diagnostics.length).toBeGreaterThan(0);
+    const d = diagnostics[0]!;
+    expect(d.message).toBe("expected identifier, found '='");
+    expect(src.slice(d.span.start, d.span.end)).toBe("=");
     // Should still have parsed the function and the return
     expect(program.functions).toHaveLength(1);
     const stmts = program.functions[0]!.body.statements;
     const hasReturn = stmts.some((s) => s.kind === "Return");
     expect(hasReturn).toBe(true);
+  });
+
+  it("formats EOF as end of file in diagnostics", () => {
+    const src = "fn main() -> i32 { return 1";
+    const { diagnostics } = parseSource(src);
+    expect(diagnostics.some((d) => d.message.includes("end of file"))).toBe(
+      true,
+    );
   });
 
   it("attaches spans to AST nodes", () => {

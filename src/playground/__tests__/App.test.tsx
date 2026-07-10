@@ -1,6 +1,7 @@
 /** @vitest-environment jsdom */
-import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent, act, waitFor } from "@testing-library/react";
+import { EditorView } from "@codemirror/view";
+import { act, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "../App.js";
 import { PlaygroundProvider } from "../context/PlaygroundContext.js";
 
@@ -10,6 +11,27 @@ function renderApp() {
       <App />
     </PlaygroundProvider>,
   );
+}
+
+function getEditorView(): EditorView {
+  const host = screen.getByTestId("source-editor");
+  const cm = host.querySelector(".cm-editor");
+  expect(cm).toBeTruthy();
+  const view = EditorView.findFromDOM(cm as HTMLElement);
+  expect(view).toBeTruthy();
+  return view!;
+}
+
+async function setEditorSource(value: string): Promise<void> {
+  const view = getEditorView();
+  await act(async () => {
+    view.dispatch({
+      changes: { from: 0, to: view.state.doc.length, insert: value },
+    });
+  });
+  await act(async () => {
+    vi.advanceTimersByTime(350);
+  });
 }
 
 describe("App live-update flow", () => {
@@ -24,23 +46,10 @@ describe("App live-update flow", () => {
   it("updates the AST tree for a nested expression after debounce", async () => {
     renderApp();
 
-    const editor = screen.getByLabelText("Source editor");
-    // Clear default and type a nested-expression program
-    fireEvent.change(editor, {
-      target: {
-        value: "fn main() -> i32 { return 2 + 3 * 4; }",
-      },
-    });
-
-    // Before debounce, the default AST (let x = ...) may still be showing.
-    // Advance past the 300ms debounce.
-    await act(async () => {
-      vi.advanceTimersByTime(350);
-    });
+    await setEditorSource("fn main() -> i32 { return 2 + 3 * 4; }");
 
     await waitFor(() => {
       expect(screen.getByTestId("ast-tab")).toBeInTheDocument();
-      // Nested Binary nodes for + and *
       expect(screen.getByText("+")).toBeInTheDocument();
       expect(screen.getByText("*")).toBeInTheDocument();
       expect(screen.getByText("2")).toBeInTheDocument();
@@ -52,24 +61,46 @@ describe("App live-update flow", () => {
   it("shows an inline diagnostic with source coordinates on parse error", async () => {
     renderApp();
 
-    const editor = screen.getByLabelText("Source editor");
-    // Missing semicolon after return expression
-    fireEvent.change(editor, {
-      target: {
-        value: "fn main() -> i32 { return 1 }",
-      },
-    });
-
-    await act(async () => {
-      vi.advanceTimersByTime(350);
-    });
+    await setEditorSource("fn main() -> i32 { return 1 }");
 
     await waitFor(() => {
       const list = screen.getByTestId("diagnostics-list");
       expect(list).toBeInTheDocument();
-      // Diagnostic text includes line:col and an "expected" message
       expect(list.textContent).toMatch(/\d+:\d+/);
       expect(list.textContent).toMatch(/expected/i);
+    });
+  });
+
+  it("renders squiggles at the parse-error span", async () => {
+    renderApp();
+    const src = "fn main() -> i32 { let x = 1 return x; }";
+    await setEditorSource(src);
+
+    await waitFor(() => {
+      const marks = screen.getAllByTestId("diagnostic-squiggle");
+      expect(marks.length).toBeGreaterThan(0);
+      const mark = marks[0]!;
+      const from = Number(mark.getAttribute("data-diagnostic-from"));
+      const to = Number(mark.getAttribute("data-diagnostic-to"));
+      expect(src.slice(from, to)).toBe("return");
+      expect(mark.getAttribute("data-diagnostic-message")).toBe(
+        "expected ';', found 'return'",
+      );
+    });
+  });
+
+  it("renders squiggles at the type-error span", async () => {
+    renderApp();
+    const src = "fn main() -> i32 { return 1 + 1.5; }";
+    await setEditorSource(src);
+
+    await waitFor(() => {
+      const marks = screen.getAllByTestId("diagnostic-squiggle");
+      expect(marks.length).toBeGreaterThan(0);
+      const mark = marks[0]!;
+      const from = Number(mark.getAttribute("data-diagnostic-from"));
+      const to = Number(mark.getAttribute("data-diagnostic-to"));
+      expect(src.slice(from, to)).toBe("1 + 1.5");
     });
   });
 });

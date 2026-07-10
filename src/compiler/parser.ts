@@ -15,6 +15,14 @@ export interface ParseResult {
   diagnostics: Diagnostic[];
 }
 
+/** Sentinel thrown after recording a diagnostic so panic-mode recovery can run. */
+class ParseError extends Error {
+  constructor() {
+    super("parse error");
+    this.name = "ParseError";
+  }
+}
+
 const STATEMENT_STARTERS: ReadonlySet<TokenType> = new Set([
   "Let",
   "If",
@@ -32,6 +40,11 @@ const STATEMENT_STARTERS: ReadonlySet<TokenType> = new Set([
   "Bang",
   "Minus",
 ]);
+
+function formatFound(tok: Token): string {
+  if (tok.type === "Eof") return "end of file";
+  return tok.value || tok.type;
+}
 
 export function parse(tokens: Token[]): ParseResult {
   const diagnostics: Diagnostic[] = [];
@@ -72,8 +85,8 @@ export function parse(tokens: Token[]): ParseResult {
   function expect(type: TokenType, expected: string): Token {
     if (check(type)) return advance();
     const found = peek();
-    error(`expected ${expected}, found '${found.value || found.type}'`, found.span);
-    return found;
+    error(`expected ${expected}, found '${formatFound(found)}'`, found.span);
+    throw new ParseError();
   }
 
   function synchronize(): void {
@@ -106,7 +119,7 @@ export function parse(tokens: Token[]): ParseResult {
     } else if (match("String")) {
       base = { kind: "PrimitiveType", name: "string", span: tok.span };
     } else {
-      error(`expected type, found '${tok.value || tok.type}'`, tok.span);
+      error(`expected type, found '${formatFound(tok)}'`, tok.span);
       advance();
       return { kind: "PrimitiveType", name: "i32", span: tok.span };
     }
@@ -334,7 +347,7 @@ export function parse(tokens: Token[]): ParseResult {
       };
     }
 
-    error(`expected expression, found '${tok.value || tok.type}'`, tok.span);
+    error(`expected expression, found '${formatFound(tok)}'`, tok.span);
     advance();
     return { kind: "IntLiteral", value: 0, span: tok.span };
   }
@@ -346,7 +359,8 @@ export function parse(tokens: Token[]): ParseResult {
     while (!check("RBrace") && !isAtEnd()) {
       try {
         statements.push(parseStatement());
-      } catch {
+      } catch (e) {
+        if (!(e instanceof ParseError)) throw e;
         synchronize();
       }
     }
@@ -506,12 +520,13 @@ export function parse(tokens: Token[]): ParseResult {
       if (check("Fn")) {
         try {
           functions.push(parseFunction());
-        } catch {
+        } catch (e) {
+          if (!(e instanceof ParseError)) throw e;
           synchronize();
         }
       } else {
         const tok = peek();
-        error(`expected 'fn', found '${tok.value || tok.type}'`, tok.span);
+        error(`expected 'fn', found '${formatFound(tok)}'`, tok.span);
         synchronize();
       }
     }
