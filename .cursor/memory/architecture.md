@@ -219,7 +219,36 @@ a || b   ⇒   IfExpr(cond: a, then: Const(1), else_: b)
 - Branches may only target labels of **enclosing** `Block`/`Loop` nodes: `br` to a `block` label jumps forward (exit), `br` to a `loop` label jumps backward (continue). The lowering pass and the codegen emitter both validate this invariant.
 - `return` from nested control flow uses WASM `return` directly — never a synthesized jump chain.
 
-## 6. Memory Layout & Allocator (Phase 7)
+## 6. Optimizer (Phase 6)
+
+Optimization passes are pure `IRModule → IRModule` functions. They never mutate their input; every transform returns a fresh tree. Passes are individually toggleable for isolated testing.
+
+```typescript
+interface Pass {
+  name: string;
+  run(ir: IRModule): IRModule;
+}
+
+// Default pipeline: [constantFold, deadCodeElimination]
+function optimize(ir: IRModule, passes?: Pass[]): IRModule;
+```
+
+**Fixpoint / budget model:** `optimize` runs the pass list repeatedly until a structural-equality fixpoint (deep compare of the IR tree) or a safety budget (default 20 outer iterations) is exhausted. Budget exhaustion throws — it should never happen for the default passes. Interleaving matters: constant folding can turn an `IfStmt` condition into a `Const`, which DCE then prunes; DCE can expose new foldable subtrees on a subsequent iteration.
+
+**Constant folding** (bottom-up rewrite of `IRExpr`):
+- `BinOp(Const, Const)` evaluates with exact WASM semantics: i32 add/sub/mul wrap to signed 32-bit (`| 0` / `Math.imul`); `div` truncates toward zero; `rem` is truncated remainder; comparisons yield `0|1`; eager `and`/`or` are bitwise.
+- **Trap preservation (mandatory):** never fold i32 `div`/`rem` when the right operand is `Const 0`; never fold i32 `div` when the operands are `INT_MIN / -1` (signed overflow trap). Leave these subtrees intact so runtime traps at the same logical point. (`INT_MIN % -1` is defined as `0` in WASM and MAY be folded.)
+- `UnOp` `eqz`/`neg` on `Const` folds; `IfExpr` with `Const` cond collapses to the taken arm (this is what eliminates constant `&&`/`||`).
+
+**Dead code elimination:**
+- Truncate statement lists after an unconditional terminator (`Return`, `Br`, `Unreachable`).
+- `IfStmt` with `Const` cond → splice in the taken branch (drop the untaken arm entirely).
+- Remove `Drop` of side-effect-free values (`Const`, `LocalGet`, pure arithmetic). Never remove nodes wrapping `CallExpr` / trap-capable ops.
+- Remove locals never read via `LocalGet`, but only when every write to that local is side-effect-free. Then **re-densify**: params keep indices `0..n-1`; surviving locals are remapped to consecutive indices; every `LocalGet`/`LocalSet` is rewritten through the old→new map; `IRFunction.locals` is rebuilt.
+
+**Pipeline integration:** `compile()` keeps `ir`/`wat` as the unoptimized artifacts and adds `optimizedIr`/`optimizedWat` alongside. Existing unoptimized golden tests remain valid. The playground shows both IR trees side by side with instruction counts (`countInstructions`).
+
+## 7. Memory Layout & Allocator (Phase 7)
 
 Strategy: **bump allocator** — the simplest correct scheme for a playground language with no `free` and short-lived programs. (Free-list upgrade is a Phase 8 stretch; the header layout below is designed so a free list can be added without changing object layout.)
 
@@ -246,7 +275,7 @@ array<T>: [ length: i32 ][ elements: T × length ]         // T stride: i32=4, f
 - String literals become data segments with the length word prepended; identical literals are deduplicated at compile time.
 - No garbage collection: memory is reclaimed only by module re-instantiation (each playground Run creates a fresh instance, so leaks are bounded by a single run).
 
-## 7. Pipeline Data Flow
+## 8. Pipeline Data Flow
 
 ```mermaid
 flowchart LR

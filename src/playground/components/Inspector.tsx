@@ -2,13 +2,17 @@ import { useState } from "react";
 import { usePlayground } from "../context/PlaygroundContext.js";
 import { AstTab } from "./AstTab.js";
 import { DiagnosticsList } from "./DiagnosticsList.js";
+import { IrTab } from "./IrTab.js";
+import { OptimizedIrTab } from "./OptimizedIrTab.js";
 import { OutputTab } from "./OutputTab.js";
 import { WatTab } from "./WatTab.js";
 
-type TabId = "ast" | "wat" | "output";
+type TabId = "ast" | "ir" | "optimized-ir" | "wat" | "output";
 
 const TABS: { id: TabId; label: string }[] = [
   { id: "ast", label: "AST" },
+  { id: "ir", label: "IR" },
+  { id: "optimized-ir", label: "Optimized IR" },
   { id: "wat", label: "WAT" },
   { id: "output", label: "Output" },
 ];
@@ -51,6 +55,10 @@ export function Inspector() {
             ast={result.ast}
             hasErrors={result.diagnostics.length > 0}
           />
+        )}
+        {active === "ir" && <IrTab ir={result.ir} />}
+        {active === "optimized-ir" && (
+          <OptimizedIrTab ir={result.ir} optimizedIr={result.optimizedIr} />
         )}
         {active === "wat" && <WatTab wat={result.wat} />}
         {active === "output" && <OutputTab lines={runOutput} />}
