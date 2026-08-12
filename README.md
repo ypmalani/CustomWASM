@@ -67,7 +67,7 @@ flowchart TB
     end
 
     Editor -->|debounced source| Context
-    Context -->|compile()| Lex
+    Context -->|"compile()"| Lex
     Lex --> Parse --> Check --> Lower --> Opt --> Emit
     Check -->|diagnostics| Inspector
     Emit -->|WAT text| Inspector
